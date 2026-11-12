@@ -1,0 +1,122 @@
+name: Build JARVIS APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract project ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ZIP="JARVIS_4_9_Compose_Cloudy_Migration.zip"
+          if [ ! -f "$ZIP" ]; then
+            echo "ERROR: $ZIP not found in repository root."
+            ls -la
+            exit 1
+          fi
+
+          mkdir -p project
+          unzip -q "$ZIP" -d project
+
+          SETTINGS_FILE=$(find "$GITHUB_WORKSPACE/project" \
+            -type f -name settings.gradle.kts -print -quit)
+
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "ERROR: settings.gradle.kts not found."
+            find project -maxdepth 4 -type f | head -100
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Project directory: $PROJECT_DIR"
+          ls -la "$PROJECT_DIR"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Android SDK уже предустановлен на ubuntu-latest (ANDROID_HOME),
+      # поэтому android-actions/setup-android не используем: он падал на sdkmanager.
+      - name: Install Android SDK 37
+        shell: bash
+        run: |
+          set -eo pipefail
+
+          echo "ANDROID_HOME=${ANDROID_HOME:-<not set>}"
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" \
+            -type f -name sdkmanager -print -quit)
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager not found"
+            ls -la "$ANDROID_HOME" "$ANDROID_HOME/cmdline-tools" || true
+            exit 1
+          fi
+          echo "Using: $SDKMANAGER"
+
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
+
+          echo "Available platforms:"
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --list 2>/dev/null \
+            | grep -E 'platforms;android-3[0-9]' || true
+
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "platforms;android-37"
+
+          echo "Installed:"
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --list_installed
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5'
+
+      - name: Build debug APK
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          gradle --version
+          gradle --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Find APK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK=$(find "$PROJECT_DIR" \
+            -type f -path "*/build/outputs/apk/debug/*.apk" \
+            -print -quit)
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK was not generated."
+            find "$PROJECT_DIR" -type d -name build
+            exit 1
+          fi
+
+          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
+          echo "APK found: $APK"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: JARVIS-4.9-APK
+          path: ${{ env.APK_PATH }}
+          if-no-files-found: error
