@@ -1,0 +1,38 @@
+name: Build JARVIS APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract project ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP=$(find . -maxdepth 1 -type f -name 'JARVIS*.zip' -print -quit)
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: JARVIS*.zip not found in repository root."
+            ls -la
+            exit 1
+          fi
+          echo "Using ZIP: $ZIP"
+          rm -rf project && mkdir -p project
+          unzip -q "$ZIP" -d project
+          SETTINGS_FILE=$(find "$GITHUB_WORKSPACE/project" -type f -name settings.gradle.kts -print -quit)
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "ERROR: settings.gradle.kts not found."
